@@ -16,13 +16,13 @@
 	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#define PLUGIN_VERSION "2013-03-10"
+#define PLUGIN_VERSION "2013-03-19"
 #define PLUGIN_PROC "plug-in-mlbevelreflect"
 
 #include <libgimp/gimp.h>
 #include <libgimp/gimpui.h>
 
-enum SlopeTypeEnum{SLOPE_FLAT=1, SLOPE_ROUND}; // 1: flat, 2: round and smooth
+enum SlopeTypeEnum{SLOPE_FLAT=1, SLOPE_ROUND, SLOPE_ROUND2}; // 1: flat, 2: round and smooth
 typedef struct {
 	gboolean invertInput; // if false use white objects on black background
 	gint slopeType;
@@ -37,6 +37,7 @@ struct { // copies of pointers to widgets, for access in callbacks
 	GtkCheckButton* invertInput_checkButton;
 	GtkRadioButton* slope_flat_radiobutton;
 	GtkRadioButton* slope_round_radiobutton;
+	GtkRadioButton* slope_round2_radiobutton;
 	GtkRadioButton* probeImg_radiobutton;
 	GtkRadioButton* normalMap_radiobutton;
 	GimpDrawableComboBox* probeImg_drawCombo;
@@ -58,7 +59,7 @@ static gboolean mlbr_dialog (GimpDrawable *drawable);
 // Set up default values for options
 static MLBevReflVals bVals = {
 	0, // invert input
-	2, // slope type
+	3, // slope type
 	3, // max normal map blur radius
 	-1, // drawable id: invalid=normal map
 	1, // specularity
@@ -206,6 +207,9 @@ mlBevelReflect (GimpDrawable *drawable,
 	gint probeImgChannels;
 	gboolean probeImgHasAlpha;
 	guchar pix[4];
+
+	gfloat nx, ny, nz, lnx, lny, lnz, tmpLen;
+	gint inc;
 
 	// specularity
 	gint j;
@@ -471,36 +475,70 @@ mlBevelReflect (GimpDrawable *drawable,
 		for (x=1; x<width-1; x++) {
 			i = x + y*width;
 			if (distDiag[i] > 0) { // foreground
-				// compute average gradient
-				dx = 0;
-				dy = 0;
-				numx = 0.01;
-				numy = 0.01;
-				// radius for smoothing
-				kr = (int) (distDiag[i])+2; // radius for circular region where to compute average gradient
-				if (bVals.slopeType == SLOPE_FLAT) {
-					if (kr > bVals.maxNormalMapBlurRadius) kr = bVals.maxNormalMapBlurRadius;
-				}
-				krsq = kr*kr;
-				for (ky=-kr; ky<=kr; ky++)
-					for (kx=-kr; kx<=kr; kx++) { // for all pixels in that square region
-						if ((x+kx >= 0) && (y+ky >= 0) && (x+kx < width) && (y+ky < height)) {
-							ksq = kx*kx + ky*ky;
-							if ((ksq <= krsq) && ((kx != 0) || (ky != 0))) { // inside circle (larger?) and not 0,0
-								klen = sqrt((float) ksq);
-								df = (distDiag[x+kx + (y+ky)*width] - distDiag[i]) / klen;
-								//if (distDiag[y+ky][x+kx] == 0) df *= 4; //df = (df > 0) ? 4 : -4;
-								ang = atan2((float) ky, (float) kx);
-								dx += cos(ang) * df;
-								dy += sin(ang) * df;
-								numx += fabs(cos(ang));
-								numy += fabs(sin(ang));
+				if (bVals.slopeType == SLOPE_ROUND2) {
+					// compute average gradient
+					nx = 0;
+					ny = 0;
+					nz = 0;
+					// radius for smoothing
+					kr = (int) (distDiag[i])+2; // radius for circular region where to compute average gradient
+					krsq = kr*kr;
+					inc = (int) MAX(1, kr/6);
+					kr -= kr%inc; // remove offset and thus artefacts
+
+					for (ky=-kr; ky<=kr; ky++)
+						for (kx=-kr; kx<=kr; kx++) { // for all pixels in that square region
+							if ((x+kx >= 0) && (y+ky >= 0) && (x+kx < width) && (y+ky < height)) {
+								ksq = kx*kx + ky*ky;
+								if ((ksq <= krsq) && ((kx != 0) || (ky != 0))) { // inside circle (larger?) and not 0,0
+									klen = sqrt((float) ksq);
+									df = 20.f*(sqrt(distDiag[x+kx + (y+ky)*width]) - sqrt(distDiag[i]));
+									lnx = -df*kx/klen;
+									lny = -df*ky/klen;
+									lnz = klen;
+									tmpLen = sqrt(lnx*lnx + lny*lny + lnz*lnz);
+									nx += lnx/tmpLen;
+									ny += lny/tmpLen;
+									nz += lnz/tmpLen;
+								}
 							}
 						}
+					// normalize
+					tmpLen = sqrt(nx*nx + ny*ny + nz*nz);
+					lx = nx/tmpLen;
+					ly = ny/tmpLen;
+				} else {
+					// compute average gradient
+					dx = 0;
+					dy = 0;
+					numx = 0.01;
+					numy = 0.01;
+					// radius for smoothing
+					kr = (int) (distDiag[i])+2; // radius for circular region where to compute average gradient
+					if (bVals.slopeType == SLOPE_FLAT) {
+						if (kr > bVals.maxNormalMapBlurRadius) kr = bVals.maxNormalMapBlurRadius;
 					}
+					krsq = kr*kr;
+					for (ky=-kr; ky<=kr; ky++)
+						for (kx=-kr; kx<=kr; kx++) { // for all pixels in that square region
+							if ((x+kx >= 0) && (y+ky >= 0) && (x+kx < width) && (y+ky < height)) {
+								ksq = kx*kx + ky*ky;
+								if ((ksq <= krsq) && ((kx != 0) || (ky != 0))) { // inside circle (larger?) and not 0,0
+									klen = sqrt((float) ksq);
+									df = (distDiag[x+kx + (y+ky)*width] - distDiag[i]) / klen;
+									//if (distDiag[y+ky][x+kx] == 0) df *= 4; //df = (df > 0) ? 4 : -4;
+									ang = atan2((float) ky, (float) kx);
+									dx += cos(ang) * df;
+									dy += sin(ang) * df;
+									numx += fabs(cos(ang));
+									numy += fabs(sin(ang));
+								}
+							}
+						}
 
-				lx = -cos(atan2(1,dx/numx));
-				ly = -cos(atan2(1,dy/numy));
+					lx = -cos(atan2(1,dx/numx));
+					ly = -cos(atan2(1,dy/numy));
+				}
 
 				i = x*channels;
 				if (probeImgDrawable) {
@@ -606,6 +644,10 @@ void slopeType_changed_callback(GtkRadioButton *radiobutton, gpointer data) {
 		bVals.slopeType = SLOPE_ROUND;
 		gimp_preview_invalidate(mlbrDialogWidgets.preview);
 	}
+	if (gtk_toggle_button_get_active(mlbrDialogWidgets.slope_round2_radiobutton)) {
+		bVals.slopeType = SLOPE_ROUND2;
+		gimp_preview_invalidate(mlbrDialogWidgets.preview);
+	}
 }
 
 void reflection_changed_callback(GtkRadioButton *unused, gpointer data) {
@@ -651,6 +693,7 @@ mlbr_dialog (GimpDrawable *drawable) {
 										GtkWidget *flat_radius_spinbutton;
 										GtkObject *flat_radius_spinbutton_adj;
 						GtkWidget *slope_round_radiobutton;
+						GtkWidget *slope_round2_radiobutton;
 			GtkWidget *reflection_frame;
 				GtkWidget *reflection_vbox;
 					GtkWidget *normalMap_radiobutton;
@@ -749,6 +792,12 @@ mlbr_dialog (GimpDrawable *drawable) {
 	gtk_box_pack_start(GTK_BOX(slope_vbox), slope_round_radiobutton, TRUE, TRUE, 0);
 	if (bVals.slopeType == SLOPE_ROUND) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(slope_round_radiobutton), TRUE);
 	g_signal_connect(slope_round_radiobutton, "toggled", G_CALLBACK(slopeType_changed_callback), NULL);
+
+	slope_round2_radiobutton = gtk_radio_button_new_with_mnemonic_from_widget(GTK_RADIO_BUTTON(slope_flat_radiobutton), "_Round v2");
+	mlbrDialogWidgets.slope_round2_radiobutton = (GtkRadioButton*) slope_round2_radiobutton;
+	gtk_box_pack_start(GTK_BOX(slope_vbox), slope_round2_radiobutton, TRUE, TRUE, 0);
+	if (bVals.slopeType == SLOPE_ROUND2) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(slope_round2_radiobutton), TRUE);
+	g_signal_connect(slope_round2_radiobutton, "toggled", G_CALLBACK(slopeType_changed_callback), NULL);
 
 	reflection_frame = gtk_frame_new(NULL);
 	gtk_box_pack_start(GTK_BOX(main_hbox), reflection_frame, TRUE, TRUE, 2);
