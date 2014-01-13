@@ -21,6 +21,7 @@
 
 #include <libgimp/gimp.h>
 #include <libgimp/gimpui.h>
+#include <stdlib.h>
 
 enum SlopeTypeEnum{SLOPE_FLAT=1, SLOPE_ROUND, SLOPE_ROUND2}; // 1: flat, 2: round and smooth
 typedef struct {

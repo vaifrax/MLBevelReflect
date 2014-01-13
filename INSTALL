@@ -1,0 +1,11 @@
+To install for all users run (with root priviledges):
+
+	make install
+
+To install for only current user run:
+
+	make userinstall
+
+To uninstall, run:
+
+	make uninstall
